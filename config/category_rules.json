@@ -1,0 +1,31 @@
+{
+    "Income": [
+        "paycheck",
+        "payroll"
+    ],
+    "Bills": [
+        "netflix",
+        "spotify",
+        "electric",
+        "rent"
+    ],
+    "Healthcare": [
+        "pharmacy",
+        "cvs"
+    ],
+    "Shopping": [
+        "heb",
+        "walmart",
+        "amazon",
+        "target"
+    ],
+    "Transportation": [
+        "shell",
+        "chevron",
+        "uber"
+    ],
+    "Transfers": [
+        "transfer to savings"
+    ],
+    "Other": []
+}
