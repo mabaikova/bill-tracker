@@ -2,6 +2,7 @@ from pathlib import Path
 import pandas as pd
 import json
 import sqlite3
+from tkinter import filedialog
 
 def load_transactions(file_path):
     return pd.read_csv(file_path)
@@ -43,33 +44,59 @@ def categorize_transaction(description, rules):
 
     return "Other"    
 
-def main_menu(transactions, rules, rules_path):
+def main_menu(rules, rules_path, db_path):
     while True:
         print("\n===== Bill Tracker =====\n")
-        print("1. View Transactions")
-        print("2. Manage Categories")
-        print("3. View Spending Summary")
-        print("4. Exit\n")
+        print("1. Import Transactions")
+        print("2. View Transactions")
+        print("3. Manage Categories")
+        print("4. View Spending Summary")
+        print("5. Exit\n")
 
         choice = input("Select an option: ")
 
         match choice:
             case "1":
-                print("\n===== Transactions =====")
-                print(transactions)
+                file_path = filedialog.askopenfilename(
+                    title="Select Transactions CSV",
+                    filetypes=[("CSV files", "*.csv")]
+                )
+                if file_path:
+                    transactions = load_transactions(file_path)
+                    validate_transactions(transactions)
+                    transactions = clean_transactions(transactions)
+                    transactions["category"] = transactions["description"].apply(categorize_transaction, args=(rules,))
+                    transactions["date"] = transactions["date"].dt.strftime("%Y-%m-%d")
+                    insert_transactions(db_path, transactions)
+                else:
+                    print("Import cancelled.")
 
             case "2":
-                category_menu(rules, rules_path)
-                transactions["category"] = transactions["description"].apply(categorize_transaction, args=(rules,))
+                print("\n===== Transactions =====")
+                rows = get_transactions(db_path)
+                if not rows:
+                    print("No transactions found. Import a CSV file first.")
+                else:
+                    for row in rows:
+                        print(row)
 
             case "3":
-                print("Feature not implemented yet.")
+                category_menu(rules, rules_path)
 
             case "4":
+                spending_summary = get_spending_summary(db_path)
+                print("\n===== Spending Summary =====")
+                if not spending_summary:
+                    print("No spending data found.")
+                else:
+                    for category, total in spending_summary:
+                        print(f"{category}: ${total:.2f}")
+
+            case "5":
                 break
 
             case _:
-                print("Invalid input. Please select options from 1 to 4.")
+                print("Invalid input. Please select options from 1 to 5.")
 
 
 def category_menu(rules, rules_path):
@@ -297,15 +324,6 @@ def create_database(db_path):
     """)
     connection.close()
 
-def insert_transactions(db_path, transactions):
-    connection = sqlite3.connect(db_path)
-    connection.executemany(
-        "INSERT INTO transactions (date, description, amount, category) VALUES ( ?, ?, ?, ?)",
-        (transactions.itertuples(index=False, name=None))
-    )
-    connection.commit()
-    connection.close()
-
 def get_transactions(db_path):
     connection = sqlite3.connect(db_path)
     cursor = connection.execute("SELECT * FROM transactions")
@@ -313,13 +331,66 @@ def get_transactions(db_path):
     connection.close()
     return rows
 
+def is_duplicate(transaction, existing_transactions):
+        for existing_transaction in existing_transactions:
+            if (
+                transaction[0] == existing_transaction[1] 
+                and transaction[1] == existing_transaction[2] 
+                and transaction[2] == existing_transaction[3]
+            ):
+                return True
+        
+        return False
+
+def insert_transactions(db_path, transactions):
+    connection = sqlite3.connect(db_path)
+    existing_transactions = get_transactions(db_path)
+    inserted_count = 0
+    duplicate_count = 0
+    for transaction in transactions.itertuples(index=False, name=None):
+        duplicate = is_duplicate(transaction, existing_transactions)
+        should_insert = True
+
+        if duplicate:
+            print(f"\nDuplicate transaction: {transaction}")
+            while True:
+                confirmation = input("Duplicate found. Insert anyway? (y/n): ").strip().lower()
+
+                if confirmation == "y":
+                    break
+                elif confirmation == "n":
+                    should_insert = False
+                    duplicate_count += 1
+                    break
+                else:
+                    print("Invalid input. Try again.")
+
+        if should_insert:
+            cursor = connection.execute("INSERT INTO transactions(date, description, amount, category) VALUES(?, ?, ?, ?)",
+                                                        transaction)
+            existing_transactions.append((cursor.lastrowid, ) + transaction)
+            inserted_count += 1
+
+    connection.commit()
+    connection.close()
+    print("\n===== Import Complete =====")
+    print(f"Transactions imported: {inserted_count}")
+    print(f"Duplicates skipped: {duplicate_count}")
+
+def get_spending_summary(db_path):
+    connection = sqlite3.connect(db_path)
+    cursor = connection.execute("""
+        SELECT category, -SUM(amount)
+        FROM transactions
+        WHERE amount < 0
+        GROUP BY category
+    """)
+    rows = cursor.fetchall()
+    connection.close()
+    return rows
+
 def main():
     
-    data_path = Path("data") / "sample_transactions.csv"
-    transactions = load_transactions(data_path)
-    validate_transactions(transactions)
-    transactions = clean_transactions(transactions)
-
     rules_path = Path("config") / "category_rules.json"
     if rules_path.exists():
         rules = load_category_rules(rules_path)
@@ -327,20 +398,12 @@ def main():
         rules = {"Shopping": ["amazon", "target"], 
                  "Bills": ["at&t", "comcast", "spotify"],
                  "Other": []}
-
-    transactions["category"] = transactions["description"].apply(categorize_transaction, args=(rules,))
-    transactions["date"] = transactions["date"].dt.strftime("%Y-%m-%d")
-    
+       
     db_path = Path("data") / "transactions.db"
     create_database(db_path)
-    insert_transactions(db_path, transactions)
-    transactions_db = get_transactions(db_path)
-    print(transactions_db)
            
-    main_menu(transactions, rules, rules_path)
-
-
-
+    main_menu(rules, rules_path, db_path)
+ 
 if __name__ == "__main__":
     main()
 
