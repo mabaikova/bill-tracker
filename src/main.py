@@ -1,6 +1,7 @@
 from pathlib import Path
 import pandas as pd
 import json
+import sqlite3
 
 def load_transactions(file_path):
     return pd.read_csv(file_path)
@@ -24,9 +25,6 @@ def clean_transactions(transactions):
     if transactions["amount"].isna().any():
         raise ValueError("Invalid transaction amount")
     return transactions
-<<<<<<< HEAD
-                    
-=======
 
 def load_category_rules(rules_path):
     with open(rules_path, "r", encoding="utf-8") as file:
@@ -286,15 +284,41 @@ def keyword_menu(rules, rules_path):
             case _:
                 print("Invalid input. Please select options from 1 to 4.")
 
->>>>>>> 8923625 (Complete category and keyword management)
+def create_database(db_path):
+    connection = sqlite3.connect(db_path)
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS transactions(
+            id INTEGER PRIMARY KEY,
+            date TEXT,
+            description TEXT,
+            amount  REAL,
+            category TEXT
+        )
+    """)
+    connection.close()
+
+def insert_transactions(db_path, transactions):
+    connection = sqlite3.connect(db_path)
+    connection.executemany(
+        "INSERT INTO transactions (date, description, amount, category) VALUES ( ?, ?, ?, ?)",
+        (transactions.itertuples(index=False, name=None))
+    )
+    connection.commit()
+    connection.close()
+
+def get_transactions(db_path):
+    connection = sqlite3.connect(db_path)
+    cursor = connection.execute("SELECT * FROM transactions")
+    rows = cursor.fetchall()
+    connection.close()
+    return rows
+
 def main():
     
     data_path = Path("data") / "sample_transactions.csv"
     transactions = load_transactions(data_path)
     validate_transactions(transactions)
     transactions = clean_transactions(transactions)
-<<<<<<< HEAD
-=======
 
     rules_path = Path("config") / "category_rules.json"
     if rules_path.exists():
@@ -303,10 +327,16 @@ def main():
         rules = {"Shopping": ["amazon", "target"], 
                  "Bills": ["at&t", "comcast", "spotify"],
                  "Other": []}
->>>>>>> 8923625 (Complete category and keyword management)
-    
+
     transactions["category"] = transactions["description"].apply(categorize_transaction, args=(rules,))
+    transactions["date"] = transactions["date"].dt.strftime("%Y-%m-%d")
     
+    db_path = Path("data") / "transactions.db"
+    create_database(db_path)
+    insert_transactions(db_path, transactions)
+    transactions_db = get_transactions(db_path)
+    print(transactions_db)
+           
     main_menu(transactions, rules, rules_path)
 
 
