@@ -62,12 +62,21 @@ def main_menu(rules, rules_path, db_path):
                     filetypes=[("CSV files", "*.csv")]
                 )
                 if file_path:
-                    transactions = load_transactions(file_path)
-                    validate_transactions(transactions)
-                    transactions = clean_transactions(transactions)
-                    transactions["category"] = transactions["description"].apply(categorize_transaction, args=(rules,))
-                    transactions["date"] = transactions["date"].dt.strftime("%Y-%m-%d")
-                    insert_transactions(db_path, transactions)
+                    try:
+                        transactions = load_transactions(file_path)
+                        validate_transactions(transactions)
+                        transactions = clean_transactions(transactions)
+                        transactions["category"] = transactions["description"].apply(categorize_transaction, args=(rules,))
+                        transactions["date"] = transactions["date"].dt.strftime("%Y-%m-%d")
+                        insert_transactions(db_path, transactions)
+                    except pd.errors.ParserError as error:
+                        print(f"Invalid CSV format: {error}")
+                    except ValueError as error:
+                        print(f"Import failed: {error}")
+                    except OSError as error:
+                        print(f"File or database error: {error}")
+                    except sqlite3.Error as error:
+                        print(f"Database error: {error}")
                 else:
                     print("Import cancelled.")
 
@@ -344,35 +353,41 @@ def is_duplicate(transaction, existing_transactions):
 
 def insert_transactions(db_path, transactions):
     connection = sqlite3.connect(db_path)
-    existing_transactions = get_transactions(db_path)
-    inserted_count = 0
-    duplicate_count = 0
-    for transaction in transactions.itertuples(index=False, name=None):
-        duplicate = is_duplicate(transaction, existing_transactions)
-        should_insert = True
+    try:
+        existing_transactions = get_transactions(db_path)
+        inserted_count = 0
+        duplicate_count = 0
+        for transaction in transactions.itertuples(index=False, name=None):
+            duplicate = is_duplicate(transaction, existing_transactions)
+            should_insert = True
 
-        if duplicate:
-            print(f"\nDuplicate transaction: {transaction}")
-            while True:
-                confirmation = input("Duplicate found. Insert anyway? (y/n): ").strip().lower()
+            if duplicate:
+                print(f"\nDuplicate transaction: {transaction}")
+                while True:
+                    confirmation = input("Duplicate found. Insert anyway? (y/n): ").strip().lower()
 
-                if confirmation == "y":
-                    break
-                elif confirmation == "n":
-                    should_insert = False
-                    duplicate_count += 1
-                    break
-                else:
-                    print("Invalid input. Try again.")
+                    if confirmation == "y":
+                        break
+                    elif confirmation == "n":
+                        should_insert = False
+                        duplicate_count += 1
+                        break
+                    else:
+                        print("Invalid input. Try again.")
 
-        if should_insert:
-            cursor = connection.execute("INSERT INTO transactions(date, description, amount, category) VALUES(?, ?, ?, ?)",
-                                                        transaction)
-            existing_transactions.append((cursor.lastrowid, ) + transaction)
-            inserted_count += 1
+            if should_insert:
+                cursor = connection.execute("INSERT INTO transactions(date, description, amount, category) VALUES(?, ?, ?, ?)",
+                                                            transaction)
+                existing_transactions.append((cursor.lastrowid, ) + transaction)
+                inserted_count += 1
 
-    connection.commit()
-    connection.close()
+        connection.commit()
+    except BaseException:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
     print("\n===== Import Complete =====")
     print(f"Transactions imported: {inserted_count}")
     print(f"Duplicates skipped: {duplicate_count}")
@@ -390,7 +405,6 @@ def get_spending_summary(db_path):
     return rows
 
 def main():
-    
     rules_path = Path("config") / "category_rules.json"
     if rules_path.exists():
         rules = load_category_rules(rules_path)
